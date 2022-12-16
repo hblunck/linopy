@@ -1187,7 +1187,10 @@ class Model:
 
             for name, labels in self.constraints.labels.items():
                 idx = np.ravel(labels)
-                vals = dual[idx].values.reshape(labels.shape)
+                try:
+                    vals = dual[idx].values.reshape(labels.shape)
+                except KeyError:
+                    vals = dual.reindex(idx).values.reshape(labels.shape)
                 self.dual[name] = xr.DataArray(vals, labels.coords)
 
         return result.status.status.value, result.status.termination_condition.value

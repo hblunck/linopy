@@ -4,6 +4,7 @@ Release Notes
 Upcoming Release
 ----------------
 
+* New solver interface for `SCIP <https://www.scipopt.org/>`. This solver is now supported by `linopy` and can be used with the `solve` function if the `pyscipopt` package is installed. The solver is available for free for general use. See the `SCIP website <https://www.scipopt.org/>` for more information.
 * Linopy now defines and uses a fixed set of solver status and termination codes. This allows for a more consistent and reliable handling of solver results. The new codes are defined in the `linopy.consants` module. The implementation is inspired by https://github.com/0b11001111 and the implementation in this `PyPSA fork <https://github.com/0b11001111/PyPSA/blob/innoptem-lopf/pypsa/linear_program/solver.py>`_
 * The automated summation of repeated variables in one constraint is now supported. Before the implementation for constraints like `x + x + x <= 5` was only working for solvers with a corresponding fallback computation. This is now fixed.
 * Integer variables are now fully supported.
