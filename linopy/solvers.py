@@ -8,9 +8,7 @@ import logging
 import os
 import re
 import subprocess as sub
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Tuple, Union
 
 import pandas as pd
 
@@ -29,10 +27,10 @@ if os.name == "nt":
 else:
     which = "which"
 
-if sub.run([which, "glpsol"], stdout=sub.DEVNULL).returncode == 0:
+if sub.run([which, "glpsol"], stdout=sub.DEVNULL, stderr=sub.STDOUT).returncode == 0:
     available_solvers.append("glpk")
 
-if sub.run([which, "cbc"], stdout=sub.DEVNULL).returncode == 0:
+if sub.run([which, "cbc"], stdout=sub.DEVNULL, stderr=sub.STDOUT).returncode == 0:
     available_solvers.append("cbc")
 
 try:
@@ -89,7 +87,7 @@ def safe_get_solution(status, func):
         try:
             logger.warning("Solution status unknown. Trying to parse solution.")
             return func()
-        except Exception as e:
+        except Exception:
             pass
     return Solution()
 
@@ -142,7 +140,11 @@ def run_cbc(
     if warmstart_fn:
         command += f"-basisI {warmstart_fn} "
 
-    command += " ".join("-" + " ".join([k, str(v)]) for k, v in solver_options.items())
+    if solver_options:
+        command += (
+            " ".join("-" + " ".join([k, str(v)]) for k, v in solver_options.items())
+            + " "
+        )
     command += f"-solve -solu {solution_fn} "
 
     if basis_fn:
@@ -150,6 +152,8 @@ def run_cbc(
 
     if not os.path.exists(solution_fn):
         os.mknod(solution_fn)
+
+    command = command.strip()
 
     if log_fn is None:
         p = sub.Popen(command.split(" "), stdout=sub.PIPE, stderr=sub.PIPE)
@@ -174,7 +178,6 @@ def run_cbc(
     status.legacy_status = data
 
     def get_solver_solution():
-
         objective = float(data[len("Optimal - objective value ") :])
 
         with open(solution_fn, "rb") as f:
@@ -234,14 +237,19 @@ def run_glpk(
     problem_fn = model.to_file(problem_fn)
 
     # TODO use --nopresol argument for non-optimal solution output
-    command = f"glpsol --lp {problem_fn} --output {solution_fn}"
+    command = f"glpsol --lp {problem_fn} --output {solution_fn} "
     if log_fn is not None:
-        command += f" --log {log_fn}"
+        command += f"--log {log_fn} "
     if warmstart_fn:
-        command += f" --ini {warmstart_fn}"
+        command += f"--ini {warmstart_fn} "
     if basis_fn:
-        command += f" -w {basis_fn}"
-    command += " ".join("-" + " ".join([k, str(v)]) for k, v in solver_options.items())
+        command += f"-w {basis_fn} "
+    if solver_options:
+        command += (
+            " ".join("--" + " ".join([k, str(v)]) for k, v in solver_options.items())
+            + " "
+        )
+    command = command.strip()
 
     p = sub.Popen(command.split(" "), stdout=sub.PIPE, stderr=sub.PIPE)
     if log_fn is None:
@@ -369,15 +377,15 @@ def run_highs(
         solution = h.getSolution()
 
         if io_api == "direct":
-            sol = pd.Series(solution.col_value, model.matrices.vlabels)
-            dual = pd.Series(solution.row_value, model.matrices.clabels)
+            sol = pd.Series(solution.col_value, model.matrices.vlabels, dtype=float)
+            dual = pd.Series(solution.row_value, model.matrices.clabels, dtype=float)
         else:
-            sol = pd.Series(solution.col_value, h.getLp().col_names_).pipe(
+            sol = pd.Series(solution.col_value, h.getLp().col_names_, dtype=float).pipe(
                 set_int_index
             )
-            dual = pd.Series(solution.row_value, h.getLp().row_names_).pipe(
-                set_int_index
-            )
+            dual = pd.Series(
+                solution.row_value, h.getLp().row_names_, dtype=float
+            ).pipe(set_int_index)
 
         return Solution(sol, dual, objective)
 
@@ -463,12 +471,16 @@ def run_cplex(
 
         objective = m.solution.get_objective_value()
 
-        solution = pd.Series(m.solution.get_values(), m.variables.get_names())
+        solution = pd.Series(
+            m.solution.get_values(), m.variables.get_names(), dtype=float
+        )
         solution = set_int_index(solution)
 
         if is_lp:
             dual = pd.Series(
-                m.solution.get_dual_values(), m.linear_constraints.get_names()
+                m.solution.get_dual_values(),
+                m.linear_constraints.get_names(),
+                dtype=float,
             )
             dual = set_int_index(dual)
         else:
@@ -562,11 +574,11 @@ def run_gurobi(
     def get_solver_solution() -> Solution:
         objective = m.ObjVal
 
-        sol = pd.Series({v.VarName: v.x for v in m.getVars()})
+        sol = pd.Series({v.VarName: v.x for v in m.getVars()}, dtype=float)
         sol = set_int_index(sol)
 
         try:
-            dual = pd.Series({c.ConstrName: c.Pi for c in m.getConstrs()})
+            dual = pd.Series({c.ConstrName: c.Pi for c in m.getConstrs()}, dtype=float)
             dual = set_int_index(dual)
         except AttributeError:
             logger.warning("Dual values of MILP couldn't be parsed")
@@ -730,17 +742,16 @@ def run_xpress(
     status.legacy_status = condition
 
     def get_solver_solution() -> Solution:
-
         objective = m.getObjVal()
 
         var = [str(v) for v in m.getVariable()]
 
-        sol = pd.Series(m.getSolution(var), index=var)
+        sol = pd.Series(m.getSolution(var), index=var, dtype=float)
         sol = set_int_index(sol)
 
         try:
             dual = [str(d) for d in m.getConstraint()]
-            dual = pd.Series(m.getDual(dual), index=dual)
+            dual = pd.Series(m.getDual(dual), index=dual, dtype=float)
             dual = set_int_index(dual)
         except xpress.SolverError:
             logger.warning("Dual values of MILP couldn't be parsed")
